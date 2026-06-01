@@ -1,0 +1,19 @@
+{
+  "name": "@servease/db-migrations",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Central Postgres migrations for Serveaso (shared serveaso database)",
+  "type": "module",
+  "scripts": {
+    "migrate": "node migrate.mjs all",
+    "migrate:sql": "node migrate.mjs sql",
+    "migrate:prisma": "node migrate.mjs prisma",
+    "migrate:tickets": "node migrate.mjs prisma tickets"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}

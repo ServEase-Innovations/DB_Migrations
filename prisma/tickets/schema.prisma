@@ -1,0 +1,71 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Customer support / complaint tickets (DDL owned by DB_Migrations).
+model SupportTicket {
+  ticket_id            BigInt    @id @default(autoincrement())
+  ticket_number        String    @unique @db.VarChar(24)
+  customerid           BigInt
+  engagement_id        BigInt?
+  serviceproviderid    BigInt?
+  category             String    @default("GENERAL") @db.VarChar(50)
+  subject              String    @db.VarChar(255)
+  description          String
+  status               String    @default("OPEN") @db.VarChar(30)
+  priority             String    @default("MEDIUM") @db.VarChar(20)
+  assigned_admin_email String?   @db.VarChar(255)
+  sla_hours            Int       @default(48)
+  sla_due_at           DateTime  @db.Timestamp(6)
+  resolved_at          DateTime? @db.Timestamp(6)
+  resolved_by          String?   @db.VarChar(255)
+  resolution_notes     String?
+  created_at           DateTime  @default(now()) @db.Timestamp(6)
+  updated_at           DateTime  @default(now()) @updatedAt @db.Timestamp(6)
+
+  comments SupportTicketComment[]
+  events   SupportTicketEvent[]
+
+  @@index([customerid], map: "idx_support_tickets_customer")
+  @@index([status], map: "idx_support_tickets_status")
+  @@index([priority], map: "idx_support_tickets_priority")
+  @@index([sla_due_at], map: "idx_support_tickets_sla_due")
+  @@index([engagement_id], map: "idx_support_tickets_engagement")
+  @@map("support_tickets")
+}
+
+model SupportTicketComment {
+  comment_id  BigInt   @id @default(autoincrement())
+  ticket_id   BigInt
+  author_type String   @db.VarChar(20)
+  author_id   BigInt?
+  author_name String?  @db.VarChar(255)
+  body        String
+  is_internal Boolean  @default(false)
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+
+  ticket SupportTicket @relation(fields: [ticket_id], references: [ticket_id], onDelete: Cascade)
+
+  @@index([ticket_id], map: "idx_support_ticket_comments_ticket")
+  @@map("support_ticket_comments")
+}
+
+model SupportTicketEvent {
+  event_id   BigInt   @id @default(autoincrement())
+  ticket_id  BigInt
+  event_type String   @db.VarChar(50)
+  payload    Json?
+  created_by String?  @db.VarChar(255)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+
+  ticket SupportTicket @relation(fields: [ticket_id], references: [ticket_id], onDelete: Cascade)
+
+  @@index([ticket_id], map: "idx_support_ticket_events_ticket")
+  @@map("support_ticket_events")
+}

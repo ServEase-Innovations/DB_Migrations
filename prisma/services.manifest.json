@@ -1,0 +1,24 @@
+{
+  "comment": "Prisma migrate deploy from this repo only. One _prisma_migrations history per DATABASE_URL.",
+  "databases": [
+    {
+      "id": "serveaso",
+      "description": "Shared marketplace Postgres",
+      "services": [
+        {
+          "name": "tickets",
+          "path": "prisma/tickets",
+          "migrate": true,
+          "baselineMigration": "20260601120000_init_support_tickets",
+          "note": "support_tickets* tables"
+        },
+        {
+          "name": "coupons",
+          "path": "prisma/coupons",
+          "migrate": false,
+          "note": "Add prisma/coupons when schema is trimmed to promo tables only"
+        }
+      ]
+    }
+  ]
+}
