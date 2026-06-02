@@ -11,6 +11,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
 import pg from "pg";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+const { loadMonorepoPostgresEnv, requirePostgresDatabaseName } = require("../scripts/postgres-env.cjs");
 
 const MIGRATIONS_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const SQL_DIR = path.join(MIGRATIONS_ROOT, "sql");
@@ -40,16 +44,18 @@ export function findRepoRoot(fromDir) {
 }
 
 function loadPgPool() {
-  const url = process.env.DATABASE_URL;
+  loadMonorepoPostgresEnv();
+  const url = process.env.DATABASE_URL?.trim();
   if (url) {
     return new pg.Pool({ connectionString: url });
   }
+  const database = requirePostgresDatabaseName();
   return new pg.Pool({
     host: process.env.POSTGRES_HOST || process.env.DB_HOST || "127.0.0.1",
     port: Number(process.env.POSTGRES_PORT || process.env.DB_PORT || 5432),
     user: process.env.POSTGRES_USER || process.env.DB_USER,
     password: process.env.POSTGRES_PASSWORD || process.env.DB_PASSWORD,
-    database: process.env.POSTGRES_DB || process.env.DB_NAME || "serveaso",
+    database,
   });
 }
 

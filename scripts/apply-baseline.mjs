@@ -1,5 +1,5 @@
 /**
- * One-time baseline for an empty `serveaso` database.
+ * One-time baseline for an empty Postgres database (name from POSTGRES_DB / DATABASE_URL).
  * Applies services/payments/src/config/db/schema.sql then records it in
  * _serveaso_schema_migrations so npm run db:migrate can apply incremental SQL + Prisma.
  */
@@ -7,7 +7,11 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import pg from "pg";
+import { createRequire } from "module";
 import { findMigrationsRoot, ensureMigrationTable } from "../migrate.mjs";
+
+const require = createRequire(import.meta.url);
+const { loadMonorepoPostgresEnv, requirePostgresDatabaseName } = require("../../scripts/postgres-env.cjs");
 
 const BASELINE_NAME = "000_baseline_payments_schema.sql";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,14 +37,16 @@ function findSchemaPath() {
 }
 
 function loadPool() {
-  const url = process.env.DATABASE_URL;
+  loadMonorepoPostgresEnv();
+  const url = process.env.DATABASE_URL?.trim();
   if (url) return new pg.Pool({ connectionString: url });
+  const database = requirePostgresDatabaseName();
   return new pg.Pool({
     host: process.env.POSTGRES_HOST || "127.0.0.1",
     port: Number(process.env.POSTGRES_PORT || 5432),
     user: process.env.POSTGRES_USER || "serveaso",
     password: process.env.POSTGRES_PASSWORD || "serveaso",
-    database: process.env.POSTGRES_DB || "serveaso",
+    database,
   });
 }
 
