@@ -10,6 +10,8 @@ Microservices **do not** run DDL on startup. Apply migrations from CI or locally
 cd DB_Migrations   # or monorepo: cd database
 cp .env.example .env   # edit DATABASE_URL
 npm install
+npm run setup          # fresh DB: baseline (payments schema.sql) + incremental migrations
+npm run baseline       # first time only — full core tables from payments/schema.sql
 npm run migrate        # SQL + Prisma (tickets)
 ```
 

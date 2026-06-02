@@ -153,6 +153,28 @@ async function supportTicketTablesExist(pool) {
   return r.rows.length > 0;
 }
 
+async function ensureSupportTicketTables(pool, svc) {
+  if (await supportTicketTablesExist(pool)) return;
+
+  const migSql = path.join(
+    MIGRATIONS_ROOT,
+    svc.path,
+    "migrations",
+    svc.baselineMigration,
+    "migration.sql"
+  );
+  if (!fs.existsSync(migSql)) {
+    throw new Error(`Missing tickets migration SQL: ${migSql}`);
+  }
+
+  console.warn(
+    `[tickets] Prisma history synced but tables missing — applying ${svc.baselineMigration} SQL…`
+  );
+  await pool.query(fs.readFileSync(migSql, "utf8"));
+  console.log("[tickets] support_tickets tables created");
+}
+
+
 export function applyPrismaMigrationsForService(servicePath, env = process.env) {
   const cwd = path.isAbsolute(servicePath)
     ? servicePath
@@ -199,19 +221,11 @@ export async function applyPrismaMigrations(options = {}) {
               throw resolveErr;
             }
           }
-          try {
-            runPrisma(cwd, ["migrate", "deploy"], env);
-          } catch (retryErr) {
-            if (
-              prismaOutputIncludes(retryErr, "P3005") &&
-              svc.name === "tickets" &&
-              (await supportTicketTablesExist(pool))
-            ) {
-              console.warn(`[${svc.name}] Tables present; continuing`);
-            } else {
-              throw retryErr;
-            }
-          }
+          runPrisma(cwd, ["migrate", "deploy"], env);
+        }
+
+        if (svc.name === "tickets" && svc.baselineMigration) {
+          await ensureSupportTicketTables(pool, svc);
         }
         ran.push(svc.name);
       }

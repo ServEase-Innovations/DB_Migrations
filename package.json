@@ -5,10 +5,12 @@
   "description": "Central Postgres migrations for Serveaso (shared serveaso database)",
   "type": "module",
   "scripts": {
+    "baseline": "node scripts/apply-baseline.mjs",
     "migrate": "node migrate.mjs all",
     "migrate:sql": "node migrate.mjs sql",
     "migrate:prisma": "node migrate.mjs prisma",
-    "migrate:tickets": "node migrate.mjs prisma tickets"
+    "migrate:tickets": "node migrate.mjs prisma tickets",
+    "setup": "npm run baseline && npm run migrate"
   },
   "engines": {
     "node": ">=20"
