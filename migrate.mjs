@@ -159,6 +159,23 @@ async function supportTicketTablesExist(pool) {
   return r.rows.length > 0;
 }
 
+/** Tickets Prisma schema must exist before 094_epoch_db_columns.sql (and later SQL). */
+async function ensureSupportTicketsFromPrisma(pool) {
+  if (await supportTicketTablesExist(pool)) {
+    return;
+  }
+  const manifest = loadPrismaManifest();
+  const ticketsSvc = (manifest.databases || [])
+    .flatMap((db) => db.services || [])
+    .find((s) => s.name === "tickets" && s.migrate);
+  if (!ticketsSvc) {
+    console.warn("[tickets] support_tickets missing and no Prisma tickets service in manifest");
+    return;
+  }
+  console.log("▶ prisma tickets (support_tickets required before 094+ SQL) …");
+  await applyPrismaMigrations({ only: "tickets", pool });
+}
+
 async function ensureSupportTicketTables(pool, svc) {
   if (await supportTicketTablesExist(pool)) return;
 
@@ -272,6 +289,7 @@ async function main() {
 
   try {
     if (cmd === "sql" || cmd === "all") {
+      await ensureSupportTicketsFromPrisma(pool);
       const { applied, skipped } = await applySqlMigrations(pool);
       if (applied.length === 0 && skipped.length > 0) {
         console.log(`SQL: up to date (${skipped.length} already applied)`);
