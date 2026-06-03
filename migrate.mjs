@@ -82,7 +82,11 @@ export async function tableExists(pool, tableName) {
      WHERE table_schema = 'public' AND table_name = $1`,
     [tableName]
   );
-  return r.rows.length > 0;
+  if (r.rows.length > 0) return true;
+  const reg = await pool.query(`SELECT to_regclass($1) IS NOT NULL AS ok`, [
+    `public.${tableName}`,
+  ]);
+  return reg.rows[0]?.ok === true;
 }
 
 async function columnExists(pool, tableName, columnName) {
@@ -91,7 +95,17 @@ async function columnExists(pool, tableName, columnName) {
      WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
     [tableName, columnName]
   );
-  return r.rows.length > 0;
+  if (r.rows.length > 0) return true;
+  const pg = await pool.query(
+    `SELECT 1
+     FROM pg_attribute a
+     JOIN pg_class c ON c.oid = a.attrelid
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND c.relname = $1
+       AND a.attname = $2 AND a.attnum > 0 AND NOT a.attisdropped`,
+    [tableName, columnName]
+  );
+  return pg.rows.length > 0;
 }
 
 export async function isSqlMigrationApplied(pool, file) {
@@ -168,15 +182,53 @@ async function tablesMissing(pool, tableNames) {
   return missing;
 }
 
+/** Coupons v2: UUID coupon_id on public.coupons + coupon_redemptions. */
+async function couponsV2Ready(pool) {
+  if (!(await tableExists(pool, "coupons"))) return false;
+  if (!(await columnExists(pool, "coupons", "coupon_id"))) return false;
+  return tableExists(pool, "coupon_redemptions");
+}
+
+async function recordMigrationOnly(pool, file) {
+  if (await isSqlMigrationApplied(pool, file)) return;
+  await pool.query(
+    `INSERT INTO public.${MIGRATION_TABLE} (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
+    [file]
+  );
+  console.log(`✅ ${file} (recorded — schema already present)`);
+}
+
 async function ensureSqlPrereqFile(pool, prereqFile, sqlCreates) {
+  const applied = await isSqlMigrationApplied(pool, prereqFile);
+
+  if (prereqFile === "090_coupons_v2_schema.sql") {
+    if (await couponsV2Ready(pool)) {
+      if (!applied) await recordMigrationOnly(pool, prereqFile);
+      return;
+    }
+    if (applied) {
+      return;
+    }
+    const legacyCoupons =
+      (await tableExists(pool, "coupons")) &&
+      !(await columnExists(pool, "coupons", "coupon_id"));
+    const label = legacyCoupons
+      ? "legacy coupons → v2"
+      : (await tablesMissing(pool, sqlCreates[prereqFile] || [])).join(", ") ||
+        "repair";
+    console.log(`▶ prerequisite SQL ${prereqFile} (${label}) …`);
+    await applyOneSqlFile(pool, prereqFile, { repair: false });
+    return;
+  }
+
   const created = sqlCreates[prereqFile] || [];
   const missing = created.length ? await tablesMissing(pool, created) : [];
-  const applied = await isSqlMigrationApplied(pool, prereqFile);
 
   if (missing.length === 0 && applied) {
     return;
   }
   if (missing.length === 0 && !applied) {
+    await recordMigrationOnly(pool, prereqFile);
     return;
   }
 
