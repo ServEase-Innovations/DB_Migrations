@@ -1,0 +1,66 @@
+{
+  "comment": "Tables created outside numbered SQL order. migrate.mjs uses this before applying pending SQL.",
+  "baseline": {
+    "markerTable": "engagements",
+    "note": "payments schema.sql via apply-baseline.mjs"
+  },
+  "prismaServices": {
+    "tickets": {
+      "tables": ["support_tickets", "support_ticket_comments", "support_ticket_events"]
+    },
+    "coupons": {
+      "tables": ["coupons", "coupon_redemptions"],
+      "migrate": false,
+      "note": "Disabled in manifest; 090_coupons_v2_schema.sql creates v2 tables"
+    }
+  },
+  "sqlCreates": {
+    "010_in_app_notifications.sql": ["in_app_notifications"],
+    "065_provider_slot_tables.sql": ["provider_weekly_slots", "provider_daily_slots"],
+    "090_coupons_v2_schema.sql": ["coupons", "coupon_redemptions"],
+    "093_service_days_tables.sql": ["service_days", "service_day_otps"]
+  },
+  "fileRequires": {
+    "030_engagement_status_check.sql": { "tables": ["engagements"] },
+    "040_merge_serviceprovider_engagement.sql": {
+      "tables": ["engagements"],
+      "optionalTables": ["serviceprovider_engagement"]
+    },
+    "050_providers_serviceprovider_roles.sql": { "tables": ["serviceprovider"] },
+    "060_providers_nannycaretypes_column.sql": { "tables": ["serviceprovider"] },
+    "065_provider_slot_tables.sql": { "tables": ["serviceprovider"] },
+    "070_providers_nearby_monthly_indexes.sql": { "tables": ["engagements"] },
+    "080_providers_relax_not_null_constraints.sql": { "tables": ["serviceprovider"] },
+    "091_engagements_duration_minutes.sql": { "tables": ["engagements"] },
+    "092_engagement_events_table.sql": { "tables": ["engagements"] },
+    "093_service_days_tables.sql": { "tables": ["engagements"] },
+    "094_epoch_db_columns.sql": {
+      "tables": [
+        "service_days",
+        "service_day_otps",
+        "provider_daily_slots",
+        "provider_weekly_slots",
+        "support_tickets",
+        "support_ticket_comments",
+        "support_ticket_events",
+        "coupons",
+        "coupon_redemptions",
+        "in_app_notifications"
+      ],
+      "ensureSql": [
+        "010_in_app_notifications.sql",
+        "065_provider_slot_tables.sql",
+        "090_coupons_v2_schema.sql",
+        "093_service_days_tables.sql"
+      ],
+      "ensurePrisma": ["tickets"],
+      "columnChecks": {
+        "coupons": "coupon_id"
+      }
+    },
+    "095_provider_ledger.sql": {
+      "tables": ["serviceprovider"],
+      "optionalTables": ["provider_ledger"]
+    }
+  }
+}

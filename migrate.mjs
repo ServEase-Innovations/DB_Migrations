@@ -19,6 +19,7 @@ const { loadMonorepoPostgresEnv, requirePostgresDatabaseName } = require("../scr
 const MIGRATIONS_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const SQL_DIR = path.join(MIGRATIONS_ROOT, "sql");
 const MANIFEST_PATH = path.join(MIGRATIONS_ROOT, "prisma", "services.manifest.json");
+const SQL_DEPS_PATH = path.join(MIGRATIONS_ROOT, "sql-dependencies.json");
 
 const MIGRATION_TABLE = "_serveaso_schema_migrations";
 
@@ -68,6 +69,209 @@ export async function ensureMigrationTable(pool) {
   `);
 }
 
+function loadSqlDependencies() {
+  if (!fs.existsSync(SQL_DEPS_PATH)) {
+    return { fileRequires: {}, sqlCreates: {}, prismaServices: {}, baseline: {} };
+  }
+  return JSON.parse(fs.readFileSync(SQL_DEPS_PATH, "utf8"));
+}
+
+export async function tableExists(pool, tableName) {
+  const r = await pool.query(
+    `SELECT 1 FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = $1`,
+    [tableName]
+  );
+  return r.rows.length > 0;
+}
+
+async function columnExists(pool, tableName, columnName) {
+  const r = await pool.query(
+    `SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
+    [tableName, columnName]
+  );
+  return r.rows.length > 0;
+}
+
+export async function isSqlMigrationApplied(pool, file) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM public.${MIGRATION_TABLE} WHERE name = $1`,
+    [file]
+  );
+  return rows.length > 0;
+}
+
+export async function listPendingSqlFiles(pool, sqlDir = SQL_DIR) {
+  await ensureMigrationTable(pool);
+  const files = fs.readdirSync(sqlDir).filter((f) => f.endsWith(".sql")).sort();
+  const pending = [];
+  for (const file of files) {
+    if (!(await isSqlMigrationApplied(pool, file))) {
+      pending.push(file);
+    }
+  }
+  return pending;
+}
+
+async function applyOneSqlFile(pool, file, options = {}) {
+  const sqlDir = options.sqlDir || SQL_DIR;
+  const record = options.record !== false;
+  const alreadyApplied = await isSqlMigrationApplied(pool, file);
+
+  if (alreadyApplied && !options.repair) {
+    return false;
+  }
+
+  const sql = fs.readFileSync(path.join(sqlDir, file), "utf8");
+  const runsOutsideTxn = /CREATE\s+INDEX\s+CONCURRENTLY/i.test(sql);
+  const client = await pool.connect();
+  try {
+    if (runsOutsideTxn) {
+      await client.query(sql);
+      if (record && !alreadyApplied) {
+        await client.query(
+          `INSERT INTO public.${MIGRATION_TABLE} (name) VALUES ($1)`,
+          [file]
+        );
+      }
+    } else {
+      await client.query("BEGIN");
+      await client.query(sql);
+      if (record && !alreadyApplied) {
+        await client.query(
+          `INSERT INTO public.${MIGRATION_TABLE} (name) VALUES ($1)`,
+          [file]
+        );
+      }
+      await client.query("COMMIT");
+    }
+    console.log(`✅ ${file}${options.repair ? " (repair)" : ""}`);
+    return true;
+  } catch (err) {
+    if (!runsOutsideTxn) {
+      await client.query("ROLLBACK").catch(() => {});
+    }
+    throw new Error(`${file}: ${err.message}`);
+  } finally {
+    client.release();
+  }
+}
+
+async function tablesMissing(pool, tableNames) {
+  const missing = [];
+  for (const t of tableNames) {
+    if (!(await tableExists(pool, t))) {
+      missing.push(t);
+    }
+  }
+  return missing;
+}
+
+async function ensureSqlPrereqFile(pool, prereqFile, sqlCreates) {
+  const created = sqlCreates[prereqFile] || [];
+  const missing = created.length ? await tablesMissing(pool, created) : [];
+  const applied = await isSqlMigrationApplied(pool, prereqFile);
+
+  if (missing.length === 0 && applied) {
+    return;
+  }
+  if (missing.length === 0 && !applied) {
+    return;
+  }
+
+  console.log(
+    `▶ prerequisite SQL ${prereqFile}${missing.length ? ` (missing: ${missing.join(", ")})` : ""} …`
+  );
+  await applyOneSqlFile(pool, prereqFile, { repair: applied });
+}
+
+async function ensurePrismaServiceTables(pool, serviceName, prismaServices) {
+  const spec = prismaServices[serviceName];
+  if (!spec) {
+    return;
+  }
+  const missing = await tablesMissing(pool, spec.tables || []);
+  if (missing.length === 0) {
+    return;
+  }
+
+  const manifest = loadPrismaManifest();
+  const svc = (manifest.databases || [])
+    .flatMap((db) => db.services || [])
+    .find((s) => s.name === serviceName && s.migrate);
+
+  if (!svc) {
+    throw new Error(
+      `Missing tables [${missing.join(", ")}] for ${serviceName} but Prisma migrate is disabled in services.manifest.json`
+    );
+  }
+
+  console.log(`▶ prisma ${serviceName} (tables required: ${missing.join(", ")}) …`);
+  await applyPrismaMigrations({ only: serviceName, pool });
+}
+
+/** Ensure baseline + SQL/Prisma prerequisites for all pending migrations. */
+export async function ensureSqlDependencies(pool) {
+  const deps = loadSqlDependencies();
+  const pending = await listPendingSqlFiles(pool);
+  if (pending.length === 0) {
+    return;
+  }
+
+  const baselineTable = deps.baseline?.markerTable || "engagements";
+  if (!(await tableExists(pool, baselineTable))) {
+    throw new Error(
+      `public.${baselineTable} is missing — run baseline first (payments schema.sql / npm run db:baseline)`
+    );
+  }
+
+  const prereqSql = new Set();
+  const prereqPrisma = new Set();
+
+  for (const file of pending) {
+    const req = deps.fileRequires?.[file];
+    if (!req) continue;
+    for (const s of req.ensureSql || []) {
+      prereqSql.add(s);
+    }
+    for (const p of req.ensurePrisma || []) {
+      prereqPrisma.add(p);
+    }
+  }
+
+  for (const file of [...prereqSql].sort()) {
+    await ensureSqlPrereqFile(pool, file, deps.sqlCreates || {});
+  }
+  for (const name of prereqPrisma) {
+    await ensurePrismaServiceTables(pool, name, deps.prismaServices || {});
+  }
+
+  for (const file of pending) {
+    const req = deps.fileRequires?.[file];
+    if (!req) continue;
+
+    for (const [table, column] of Object.entries(req.columnChecks || {})) {
+      if (!(await tableExists(pool, table))) {
+        throw new Error(`${file} requires public.${table} — prerequisite SQL did not create it`);
+      }
+      if (!(await columnExists(pool, table, column))) {
+        throw new Error(
+          `${file} requires public.${table}.${column} — run ${(req.ensureSql || []).find((f) => f.includes("090")) || "090_coupons_v2_schema.sql"}`
+        );
+      }
+    }
+
+    for (const table of req.tables || []) {
+      if (req.columnChecks?.[table]) continue;
+      if (!(await tableExists(pool, table))) {
+        const hint = (req.ensureSql || []).concat(req.ensurePrisma || []).join(", ") || "baseline";
+        throw new Error(`${file} requires public.${table} (expected from: ${hint})`);
+      }
+    }
+  }
+}
+
 export async function applySqlMigrations(pool, options = {}) {
   const sqlDir = options.sqlDir || SQL_DIR;
   if (!fs.existsSync(sqlDir)) {
@@ -81,43 +285,14 @@ export async function applySqlMigrations(pool, options = {}) {
   const skipped = [];
 
   for (const file of files) {
-    const { rows } = await pool.query(
-      `SELECT 1 FROM public.${MIGRATION_TABLE} WHERE name = $1`,
-      [file]
-    );
-    if (rows.length) {
+    if (await isSqlMigrationApplied(pool, file)) {
       skipped.push(file);
       continue;
     }
 
-    const sql = fs.readFileSync(path.join(sqlDir, file), "utf8");
-    const runsOutsideTxn = /CREATE\s+INDEX\s+CONCURRENTLY/i.test(sql);
-    const client = await pool.connect();
-    try {
-      if (runsOutsideTxn) {
-        await client.query(sql);
-        await client.query(
-          `INSERT INTO public.${MIGRATION_TABLE} (name) VALUES ($1)`,
-          [file]
-        );
-      } else {
-        await client.query("BEGIN");
-        await client.query(sql);
-        await client.query(
-          `INSERT INTO public.${MIGRATION_TABLE} (name) VALUES ($1)`,
-          [file]
-        );
-        await client.query("COMMIT");
-      }
+    const didApply = await applyOneSqlFile(pool, file, { sqlDir });
+    if (didApply) {
       applied.push(file);
-      console.log(`✅ ${file}`);
-    } catch (err) {
-      if (!runsOutsideTxn) {
-        await client.query("ROLLBACK").catch(() => {});
-      }
-      throw new Error(`${file}: ${err.message}`);
-    } finally {
-      client.release();
     }
   }
 
@@ -157,23 +332,6 @@ async function supportTicketTablesExist(pool) {
      WHERE table_schema = 'public' AND table_name = 'support_tickets'`
   );
   return r.rows.length > 0;
-}
-
-/** Tickets Prisma schema must exist before 094_epoch_db_columns.sql (and later SQL). */
-async function ensureSupportTicketsFromPrisma(pool) {
-  if (await supportTicketTablesExist(pool)) {
-    return;
-  }
-  const manifest = loadPrismaManifest();
-  const ticketsSvc = (manifest.databases || [])
-    .flatMap((db) => db.services || [])
-    .find((s) => s.name === "tickets" && s.migrate);
-  if (!ticketsSvc) {
-    console.warn("[tickets] support_tickets missing and no Prisma tickets service in manifest");
-    return;
-  }
-  console.log("▶ prisma tickets (support_tickets required before 094+ SQL) …");
-  await applyPrismaMigrations({ only: "tickets", pool });
 }
 
 async function ensureSupportTicketTables(pool, svc) {
@@ -289,7 +447,7 @@ async function main() {
 
   try {
     if (cmd === "sql" || cmd === "all") {
-      await ensureSupportTicketsFromPrisma(pool);
+      await ensureSqlDependencies(pool);
       const { applied, skipped } = await applySqlMigrations(pool);
       if (applied.length === 0 && skipped.length > 0) {
         console.log(`SQL: up to date (${skipped.length} already applied)`);
