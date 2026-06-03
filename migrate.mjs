@@ -245,8 +245,29 @@ export async function applyPrismaMigrations(options = {}) {
   return ran;
 }
 
+function runBaselineStep() {
+  const script = path.join(MIGRATIONS_ROOT, "scripts", "apply-baseline.mjs");
+  if (!fs.existsSync(script)) {
+    throw new Error(`Baseline script not found: ${script}`);
+  }
+  console.log("▶ baseline (core schema from payments/schema.sql if needed) …");
+  const result = spawnSync(process.execPath, [script], {
+    cwd: MIGRATIONS_ROOT,
+    env: process.env,
+    stdio: "inherit",
+  });
+  if (result.status !== 0) {
+    throw new Error("baseline failed — ensure services/payments submodule is checked out");
+  }
+}
+
 async function main() {
   const cmd = process.argv[2] || "all";
+
+  if (cmd === "sql" || cmd === "all") {
+    runBaselineStep();
+  }
+
   const pool = loadPgPool();
 
   try {
