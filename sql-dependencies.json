@@ -61,6 +61,7 @@
     "095_provider_ledger.sql": {
       "tables": ["serviceprovider"],
       "optionalTables": ["provider_ledger"]
-    }
+    },
+    "100_engagement_status_crm_escalated.sql": { "tables": ["engagements"] }
   }
 }
