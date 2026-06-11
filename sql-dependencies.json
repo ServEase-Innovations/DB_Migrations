@@ -62,6 +62,7 @@
       "tables": ["serviceprovider"],
       "optionalTables": ["provider_ledger"]
     },
-    "100_engagement_status_crm_escalated.sql": { "tables": ["engagements"] }
+    "100_engagement_status_crm_escalated.sql": { "tables": ["engagements"] },
+    "101_payments_wallet_amount.sql": { "tables": ["payments"] }
   }
 }
