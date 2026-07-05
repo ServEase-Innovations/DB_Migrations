@@ -46,6 +46,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trigger_update_tracking_status_updated_at ON engagement_tracking_status;
+
 CREATE TRIGGER trigger_update_tracking_status_updated_at
     BEFORE UPDATE ON engagement_tracking_status
     FOR EACH ROW
