@@ -446,26 +446,52 @@ export async function applyPrismaMigrations(options = {}) {
         try {
           runPrisma(cwd, ["migrate", "deploy"], env);
         } catch (err) {
-          if (!prismaOutputIncludes(err, "P3005") || !svc.baselineMigration) {
+          // P3009: Failed migrations exist
+          if (prismaOutputIncludes(err, "P3009")) {
+            console.warn(`[${svc.name}] Failed migrations detected — cleaning up and retrying…`);
+            
+            // Mark failed migrations as rolled back so we can retry
+            const failedMigMatch = (err.stderr || err.stdout || "").match(/`([^`]+)` migration started at/);
+            if (failedMigMatch) {
+              const failedMig = failedMigMatch[1];
+              console.warn(`[${svc.name}] Resolving failed migration: ${failedMig}`);
+              try {
+                runPrisma(cwd, ["migrate", "resolve", "--rolled-back", failedMig], env);
+              } catch (resolveErr) {
+                console.warn(`[${svc.name}] Could not resolve failed migration, trying to continue...`);
+              }
+            }
+            
+            // Ensure tables exist after cleanup
+            if (svc.name === "tickets" && svc.baselineMigration) {
+              await ensureSupportTicketTables(pool, svc);
+            }
+            
+            // Retry the migration
+            runPrisma(cwd, ["migrate", "deploy"], env);
+          }
+          // P3005: Database not empty (need baseline)
+          else if (prismaOutputIncludes(err, "P3005") && svc.baselineMigration) {
+            console.warn(
+              `[${svc.name}] Database not empty; baselining ${svc.baselineMigration}…`
+            );
+            try {
+              runPrisma(cwd, ["migrate", "resolve", "--applied", svc.baselineMigration], env);
+            } catch (resolveErr) {
+              if (!prismaOutputIncludes(resolveErr, "P3008")) {
+                throw resolveErr;
+              }
+            }
+            
+            // After resolving baseline, ensure tables exist again
+            if (svc.name === "tickets" && svc.baselineMigration) {
+              await ensureSupportTicketTables(pool, svc);
+            }
+            
+            runPrisma(cwd, ["migrate", "deploy"], env);
+          } else {
             throw err;
           }
-          console.warn(
-            `[${svc.name}] Database not empty; baselining ${svc.baselineMigration}…`
-          );
-          try {
-            runPrisma(cwd, ["migrate", "resolve", "--applied", svc.baselineMigration], env);
-          } catch (resolveErr) {
-            if (!prismaOutputIncludes(resolveErr, "P3008")) {
-              throw resolveErr;
-            }
-          }
-          
-          // After resolving baseline, ensure tables exist again
-          if (svc.name === "tickets" && svc.baselineMigration) {
-            await ensureSupportTicketTables(pool, svc);
-          }
-          
-          runPrisma(cwd, ["migrate", "deploy"], env);
         }
         ran.push(svc.name);
       }
