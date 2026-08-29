@@ -438,6 +438,11 @@ export async function applyPrismaMigrations(options = {}) {
         const cwd = path.join(MIGRATIONS_ROOT, svc.path);
         console.log(`▶ prisma migrate deploy — ${svc.name} (${svc.path})`);
 
+        // For tickets service, ensure tables exist BEFORE running migrations
+        if (svc.name === "tickets" && svc.baselineMigration) {
+          await ensureSupportTicketTables(pool, svc);
+        }
+
         try {
           runPrisma(cwd, ["migrate", "deploy"], env);
         } catch (err) {
@@ -454,11 +459,13 @@ export async function applyPrismaMigrations(options = {}) {
               throw resolveErr;
             }
           }
+          
+          // After resolving baseline, ensure tables exist again
+          if (svc.name === "tickets" && svc.baselineMigration) {
+            await ensureSupportTicketTables(pool, svc);
+          }
+          
           runPrisma(cwd, ["migrate", "deploy"], env);
-        }
-
-        if (svc.name === "tickets" && svc.baselineMigration) {
-          await ensureSupportTicketTables(pool, svc);
         }
         ran.push(svc.name);
       }
