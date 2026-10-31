@@ -22,11 +22,11 @@ INSERT INTO public.coupons (
   created_at
 )
 VALUES
-  -- ON-DEMAND ₹1 COUPONS
+  -- ON-DEMAND ₹1 COUPONS (Available for ALL customers)
   (
     gen_random_uuid(),
     'MAID1-ONDEMAND',
-    '₹1 on your 1st on-demand maid booking',
+    '₹1 on-demand maid booking',
     'MAID',
     'FLAT',
     99999,
@@ -38,14 +38,14 @@ VALUES
     '2030-12-31 23:59:59',
     NULL,
     true,
-    'FIRST_BOOKING',
+    'ANY',
     NULL,
     NOW()
   ),
   (
     gen_random_uuid(),
     'COOK1-ONDEMAND',
-    '₹1 on your 1st on-demand cook booking',
+    '₹1 on-demand cook booking',
     'COOK',
     'FLAT',
     99999,
@@ -57,14 +57,14 @@ VALUES
     '2030-12-31 23:59:59',
     NULL,
     true,
-    'FIRST_BOOKING',
+    'ANY',
     NULL,
     NOW()
   ),
   (
     gen_random_uuid(),
     'NANNY1-ONDEMAND',
-    '₹1 on your 1st on-demand nanny booking',
+    '₹1 on-demand nanny booking',
     'NANNY',
     'FLAT',
     99999,
@@ -76,7 +76,7 @@ VALUES
     '2030-12-31 23:59:59',
     NULL,
     true,
-    'FIRST_BOOKING',
+    'ANY',
     NULL,
     NOW()
   ),
